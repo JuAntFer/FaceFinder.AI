@@ -1,48 +1,74 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FaceFinder.AI</title>
-    <link rel="stylesheet" href="css/style.css">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FaceFinder.AI</title>
+  <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
-    <header>
-        <h1>FaceFinder.AI</h1>
-        <p>Detect and match faces from reference images</p>
-    </header>
+  <header>
+    <h1>FaceFinder.AI</h1>
+    <p>Detect and match faces from reference images</p>
+  </header>
 
-    <main>
-        <!-- Step 1: Upload Reference -->
-        <section id="step1">
-            <h2>Step 1: Upload Reference Image</h2>
-            <input type="file" id="referenceFile" accept="image/*">
-            <button id="uploadReferenceBtn">Upload</button>
-            <div id="facesContainer" class="faces-container"></div>
-        </section>
+  <main>
+    <!-- Step 1 -->
+    <section id="step1">
+      <h2>Step 1: Upload Reference Image</h2>
+      <div id="referenceDrop" class="drop-zone">
+        <p>Drag & Drop reference image here<br>or click to select</p>
+        <span class="file-info"></span>
+        <input type="file" id="referenceFile" accept="image/*" hidden>
+      </div>
 
-        <!-- Step 2: Upload Target -->
-        <section id="step2" class="hidden">
-            <h2>Step 2: Upload Target Image(s)</h2>
-            <input type="file" id="targetFile" accept="image/*,.zip">
-            <label>
-                <input type="radio" name="mode" value="individually" checked> Individually
-            </label>
-            <label>
-                <input type="radio" name="mode" value="together"> Together
-            </label>
-            <button id="matchBtn">Match Faces</button>
-            <div id="resultContainer" class="result-container"></div>
-        </section>
+      <button id="uploadReferenceBtn">Upload</button>
+      <div id="facesContainer" class="faces-container"></div>
+    </section>
 
-        <!-- Step 3: Job Status -->
-        <section id="step3" class="hidden">
-            <h2>Job Status</h2>
-            <div id="jobStatus"></div>
-            <a id="downloadLink" href="#" class="hidden">Download ZIP</a>
-        </section>
-    </main>
+    <!-- Mode selection (hidden initially, shows after faces appear) -->
+    <section id="modeSection" class="hidden">
+      <div class="options">
+        <p class="options-desc"><strong>Mode:</strong> Choose how faces are compared</p>
+        <label>
+          <input type="radio" name="mode" value="individually" checked>
+          Individually – each selected face is matched one by one
+        </label>
+        <label>
+          <input type="radio" name="mode" value="together">
+          Together – all selected faces are treated as a group
+        </label>
+      </div>
+    </section>
 
-    <script src="js/app.js"></script>
+    <!-- Step 2 -->
+    <section id="step2" class="hidden">
+      <h2>Step 2: Upload Target Image(s)</h2>
+      <div id="targetDrop" class="drop-zone">
+        <p>Drag & Drop target image or ZIP<br>or click to select</p>
+        <span class="file-info"></span>
+        <input type="file" id="targetFile" accept="image/*,.zip" hidden>
+      </div>
+      <button id="matchBtn">Match Faces</button>
+      <!-- New Target Button -->
+      <button id="newTargetBtn" class="hidden" style="margin-left:10px; background:#28a745;">Upload New Target</button>
+
+      <div id="resultContainer" class="result-container"></div>
+    </section>
+
+    <!-- Step 3 -->
+    <section id="step3" class="hidden">
+      <h2>Job Status</h2>
+      <div id="jobStatus"></div>
+      <a id="downloadLink" href="#" class="hidden">Download ZIP</a>
+    </section>
+
+    <!-- Messages + Loader -->
+    <div id="message" class="message"></div>
+    <div id="loader" class="loader hidden"></div>
+  </main>
+
+  <script type="module" src="js/app.js"></script>
 </body>
 </html>
+
