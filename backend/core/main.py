@@ -2,6 +2,7 @@
 import os
 import shutil
 import logging
+import cv2
 from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
