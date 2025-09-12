@@ -21,19 +21,27 @@ from backend.core.processor import process_images_in_dir
 
 app = FastAPI(
     title="FaceFinder.AI Backend",
-    description="Detect selected faces from reference image in target image(s)",
-    version="2.7",
+    description="Detect selected faces from reference image(s) in target image(s)",
+    version="3.0",
 )
 
 from fastapi.middleware.cors import CORSMiddleware
-# Allow CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # or ["http://127.0.0.1:5500"] for stricter rules
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# -------------------------
+# Simple server-side persistent reference store (in-memory + files)
+# -------------------------
+REFS_DIR = os.path.join(tempfile.gettempdir(), "ffai_refs")
+os.makedirs(REFS_DIR, exist_ok=True)
+
+# REF_STORE: list of dicts { index: int, ref_source: str, path: str, embedding: list, bbox: [x1,y1,x2,y2] }
+REF_STORE = []
 
 
 # -------------------------
@@ -50,97 +58,199 @@ def validate_upload_file(upload_file: UploadFile, allowed_extensions: list, max_
     if size > max_size_mb:
         raise HTTPException(status_code=400, detail=f"File too large: {size:.2f} MB. Max allowed: {max_size_mb} MB")
 
+
 # -------------------------
-# Step 1: Extract faces from reference image
+# Helper: save UploadFile to disk and return path
+# -------------------------
+async def _save_upload_to_dir(upload: UploadFile, dest_dir: str) -> str:
+    filename = os.path.basename(upload.filename)
+    safe_name = f"{len(os.listdir(dest_dir))}_{filename}"
+    dest_path = os.path.join(dest_dir, safe_name)
+    with open(dest_path, "wb") as f:
+        f.write(await upload.read())
+    return dest_path
+
+
+# -------------------------
+# Step 1: Extract faces from reference images (multiple or zip)
+# - Persist saved reference images in REFS_DIR
+# - Append their faces/embeddings into REF_STORE with global stable indices
 # -------------------------
 @app.post("/reference-faces/")
-async def reference_faces(reference: UploadFile = File(...)):
+async def reference_faces(references: List[UploadFile] = File(...)):
     try:
-        cleanup_old_temp_folders()
-        validate_upload_file(reference, allowed_extensions=[".jpg", ".jpeg", ".png"], max_size_mb=50)
+        # Accept uploaded images or a zip containing images.
+        # Save images into REFS_DIR (persistent across calls).
+        new_faces_info = []
 
-        ref_img = read_upload_file_to_bgr(reference)
-        if ref_img is None:
-            raise ValueError("Cannot decode reference image")
+        for ref in references:
+            # Validate
+            validate_upload_file(ref, [".jpg", ".jpeg", ".png", ".zip"], 50)
 
-        embeddings = get_face_embeddings(ref_img)
-        if not embeddings:
-            return {"faces": []}
+            # If zip: extract images into a temp dir then move them into REFS_DIR
+            if ref.filename.lower().endswith(".zip"):
+                tmp_dir = extract_zip_to_temp(ref)
+                for root, _, files in os.walk(tmp_dir):
+                    for f in files:
+                        if f.lower().endswith((".jpg", ".jpeg", ".png")):
+                            src = os.path.join(root, f)
+                            dest_name = f"{len(os.listdir(REFS_DIR))}_{os.path.basename(src)}"
+                            dest_path = os.path.join(REFS_DIR, dest_name)
+                            shutil.copy(src, dest_path)
+                shutil.rmtree(tmp_dir, ignore_errors=True)
+            else:
+                dest_path = os.path.join(REFS_DIR, f"{len(os.listdir(REFS_DIR))}_{os.path.basename(ref.filename)}")
+                with open(dest_path, "wb") as out_f:
+                    out_f.write(await ref.read())
 
-        faces_info = []
-        for idx, (emb, (x1, y1, x2, y2)) in enumerate(embeddings):
-            crop = ref_img[y1:y2, x1:x2].copy()
-            _, jpg = cv2.imencode(".jpg", crop)
-            b64 = base64.b64encode(jpg.tobytes()).decode("utf-8")
-            faces_info.append({
-                "index": idx,
-                "bbox": [int(x1), int(y1), int(x2), int(y2)],
-                "thumbnail_b64": b64
-            })
+        # Now scan REFS_DIR for any images that are NOT yet in REF_STORE.
+        # We'll identify new files by path not present in existing REF_STORE entries.
+        existing_paths = {entry["path"] for entry in REF_STORE}
+        files_in_dir = sorted([
+            os.path.join(REFS_DIR, f) for f in os.listdir(REFS_DIR)
+            if f.lower().endswith((".jpg", ".jpeg", ".png"))
+        ])
 
-        return {"faces": faces_info}
+        for path in files_in_dir:
+            if path in existing_paths:
+                continue  # already processed
+            # compute embeddings and store each face found in this image
+            img = cv2.imread(path)
+            if img is None:
+                continue
+            embeddings = get_face_embeddings(img)
+            for emb, (x1, y1, x2, y2) in embeddings:
+                idx = len(REF_STORE)  # global stable index
+                # store embedding as list for JSON-friendly structure; keep original as numpy when used
+                REF_STORE.append({
+                    "index": idx,
+                    "ref_source": os.path.basename(path),
+                    "path": path,
+                    "embedding": emb.tolist(),
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)]
+                })
+
+                # create thumbnail base64 to return to frontend for immediate display
+                crop = img[y1:y2, x1:x2].copy()
+                _, jpg = cv2.imencode(".jpg", crop)
+                b64 = base64.b64encode(jpg.tobytes()).decode("utf-8")
+                new_faces_info.append({
+                    "index": idx,
+                    "bbox": [int(x1), int(y1), int(x2), int(y2)],
+                    "thumbnail_b64": b64,
+                    "ref_source": os.path.basename(path)
+                })
+
+        return {"faces": new_faces_info}
 
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 # -------------------------
 # Step 2: Match selected face(s)
+# - By default uses embeddings present in REF_STORE (server-side persistent)
+# - If REF_STORE empty, accepts references uploaded in the same request (backward-compatible)
 # -------------------------
 @app.post("/match-face-selected/")
 async def match_face_selected(
-    reference: UploadFile = File(...),
+    references: List[UploadFile] = File([]),
     target: UploadFile = File(...),
-    selected_indices_str: str = Form(..., description="Comma-separated indices of faces to detect"),
-    mode: str = Form("individually", description="Detection mode: 'individually' or 'together'"),
-    max_seconds: int = Form(300, description="Maximum processing time in seconds for the dataset"),
+    selected_indices_str: str = Form(...),
+    mode: str = Form("individually"),
+    max_seconds: int = Form(300),
     background_tasks: BackgroundTasks = None
 ):
     try:
-        cleanup_old_temp_folders()
-        validate_upload_file(reference, allowed_extensions=[".jpg", ".jpeg", ".png"], max_size_mb=50)
-        validate_upload_file(target, allowed_extensions=[".jpg", ".jpeg", ".png", ".zip"], max_size_mb=200)
-
-        try:
-            selected_indices = [int(x.strip()) for x in selected_indices_str.split(",") if x.strip()]
-        except:
-            raise HTTPException(status_code=400, detail="selected_indices must be comma-separated integers")
-
-        ref_img = read_upload_file_to_bgr(reference)
-        if ref_img is None:
-            raise ValueError("Cannot decode reference image")
-
-        embeddings = get_face_embeddings(ref_img)
-        if not embeddings:
-            raise HTTPException(status_code=400, detail="No faces found in reference image")
-
-        ref_vectors = []
-        for idx in selected_indices:
-            if idx < 0 or idx >= len(embeddings):
-                raise HTTPException(status_code=400, detail=f"Invalid face index: {idx}")
-            ref_vectors.append(embeddings[idx][0])
-
-        # -------------------------
-        # Case A: ZIP dataset
-        # -------------------------
-        if target.filename.endswith(".zip"):
-            tmp_dir = extract_zip_to_temp(target)
-
-            subdirs = [os.path.join(tmp_dir, d) for d in os.listdir(tmp_dir)]
+        # Build target dataset (single image or zip -> tmp dir)
+        is_zip_target = target.filename.lower().endswith(".zip")
+        tmp_data_dir = None
+        if is_zip_target:
+            tmp_data_dir = extract_zip_to_temp(target)
+            # if zip contains a single top-level folder, use it
+            subdirs = [os.path.join(tmp_data_dir, d) for d in os.listdir(tmp_data_dir)]
             if len(subdirs) == 1 and os.path.isdir(subdirs[0]):
-                tmp_dir = subdirs[0]
+                tmp_data_dir = subdirs[0]
+        else:
+            # single image target will be handled later by read_upload_file_to_bgr
+            pass
 
+        # Determine reference embeddings to use:
+        # 1) Prefer server-side REF_STORE if it has entries (stable global indices)
+        # 2) If REF_STORE empty, process uploaded references in this request (backward compatibility)
+        ref_vectors = []
+        if REF_STORE:
+            # Convert stored embedding lists back to numpy arrays
+            all_embeddings = [np.array(entry["embedding"]) for entry in REF_STORE]
+            # parse selected_indices_str (these are global indices)
+            try:
+                selected_indices = [int(x.strip()) for x in selected_indices_str.split(",") if x.strip()]
+            except:
+                raise HTTPException(status_code=400, detail="selected_indices must be comma-separated integers")
+            for idx in selected_indices:
+                if idx < 0 or idx >= len(all_embeddings):
+                    raise HTTPException(status_code=400, detail=f"Invalid face index: {idx}")
+                ref_vectors.append(all_embeddings[idx])
+        else:
+            # no server-side refs; fall back to provided references param (old behavior)
+            ref_files = []
+            if len(references) == 1 and references[0].filename.lower().endswith(".zip"):
+                tmp_refs_dir = extract_zip_to_temp(references[0])
+                for root, _, files in os.walk(tmp_refs_dir):
+                    for f in files:
+                        if f.lower().endswith((".jpg", ".jpeg", ".png")):
+                            ref_files.append(os.path.join(root, f))
+            else:
+                tmp_refs_dir = tempfile.mkdtemp(prefix="refs_")
+                for ref in references:
+                    validate_upload_file(ref, [".jpg", ".jpeg", ".png", ".zip"], 50)
+                    path = os.path.join(tmp_refs_dir, ref.filename)
+                    with open(path, "wb") as f:
+                        f.write(await ref.read())
+                    ref_files.append(path)
+
+            all_embeddings = []
+            for ref_path in ref_files:
+                img = cv2.imread(ref_path)
+                if img is None:
+                    continue
+                embs = get_face_embeddings(img)
+                for emb, bbox in embs:
+                    all_embeddings.append(emb)
+
+            if not all_embeddings:
+                raise HTTPException(status_code=400, detail="No faces found in provided reference images")
+
+            try:
+                selected_indices = [int(x.strip()) for x in selected_indices_str.split(",") if x.strip()]
+            except:
+                raise HTTPException(status_code=400, detail="selected_indices must be comma-separated integers")
+            for idx in selected_indices:
+                if idx < 0 or idx >= len(all_embeddings):
+                    raise HTTPException(status_code=400, detail=f"Invalid face index: {idx}")
+                ref_vectors.append(all_embeddings[idx])
+
+            # Clean temporary refs dir
+            try:
+                shutil.rmtree(tmp_refs_dir, ignore_errors=True)
+            except:
+                pass
+
+        # -------------------------
+        # If target is a ZIP -> background or synchronous job over a folder
+        # -------------------------
+        if is_zip_target:
             job_id = generate_job_id()
             output_dir = os.path.join(tempfile.gettempdir(), f"ffai_out_{job_id}")
             os.makedirs(output_dir, exist_ok=True)
 
-            # Background job
+            # Background job support
             if background_tasks:
                 JOB_STORE[job_id] = {"status": "pending", "result": None, "output_dir": output_dir}
-
                 def background_job():
                     try:
                         summary = process_images_in_dir(
-                            data_dir=tmp_dir,
+                            data_dir=tmp_data_dir,
                             ref_embeddings=ref_vectors,
                             output_dir=output_dir,
                             mode=mode,
@@ -153,38 +263,22 @@ async def match_face_selected(
                         JOB_STORE[job_id]["status"] = "error"
                         JOB_STORE[job_id]["result"] = str(e)
                     finally:
-                        shutil.rmtree(tmp_dir, ignore_errors=True)
-
+                        shutil.rmtree(tmp_data_dir, ignore_errors=True)
                 background_tasks.add_task(background_job)
                 return {"job_id": job_id, "status": "pending"}
 
-            # Synchronous processing
+            # synchronous processing
             try:
                 summary = process_images_in_dir(
-                    data_dir=tmp_dir,
+                    data_dir=tmp_data_dir,
                     ref_embeddings=ref_vectors,
                     output_dir=output_dir,
                     mode=mode,
                     max_seconds=max_seconds,
                     threshold=SIMILARITY_THRESHOLD
                 )
-                # Add thumbnails to each matched image
-                for r in summary["results"]:
-                    if r["matches"]:
-                        img = cv2.imread(r["saved_path"])
-                        if img is not None:
-                        # Resize thumbnail to 128px height while keeping aspect ratio
-                            h, w = img.shape[:2]
-                            new_h = 128
-                            new_w = int(w * (new_h / h))
-                            thumb = cv2.resize(img, (new_w, new_h))
-                            _, jpg = cv2.imencode(".jpg", thumb)
-                            b64 = base64.b64encode(jpg.tobytes()).decode("utf-8")
-                            r["thumbnail_b64"] = b64
-
-
-                # ZIP the output folder
-                zip_path = os.path.join(tempfile.gettempdir(), f"annotated_{job_id}.zip")
+                # create zip
+                zip_path = os.path.join(tempfile.gettempdir(), f"annotated_{generate_job_id()}.zip")
                 with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
                     for root, _, files in os.walk(output_dir):
                         for file in files:
@@ -192,13 +286,12 @@ async def match_face_selected(
                             arcname = os.path.relpath(file_path, start=output_dir)
                             zipf.write(file_path, arcname=arcname)
                 summary["zip_file"] = os.path.basename(zip_path)
-
                 return JSONResponse(summary)
             finally:
-                shutil.rmtree(tmp_dir, ignore_errors=True)
+                shutil.rmtree(tmp_data_dir, ignore_errors=True)
 
         # -------------------------
-        # Case B: Single image
+        # Single target image case
         # -------------------------
         tgt_img = read_upload_file_to_bgr(target)
         if tgt_img is None:
@@ -227,8 +320,9 @@ async def match_face_selected(
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 
+
 # -------------------------
-# Job status endpoint
+# Job status
 # -------------------------
 @app.get("/jobs/{job_id}")
 async def get_job_status(job_id: str):
@@ -236,8 +330,9 @@ async def get_job_status(job_id: str):
         raise HTTPException(status_code=404, detail="Job not found")
     return JOB_STORE[job_id]
 
+
 # -------------------------
-# Download output folder for finished job
+# Download job output
 # -------------------------
 @app.get("/download/{job_id}")
 async def download_job_output(job_id: str):
