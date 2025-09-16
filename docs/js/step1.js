@@ -16,6 +16,7 @@ export const step1 = (() => {
   let displayFiles = [];
 
   const BACKEND_URL =  "https://facefinder-ai.onrender.com";
+  // const BACKEND_URL = "http://127.0.0.1:8000";
 
   // -------------------------
   // UI Helpers

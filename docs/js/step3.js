@@ -11,7 +11,6 @@ const downloadLink = document.getElementById("downloadLink");
 const resetTargetBtn = document.getElementById("resetTargetBtn");
 
 
-const BACKEND_URL =  "https://facefinder-ai.onrender.com";
 // -------------------------
 // Helpers
 // -------------------------
@@ -105,7 +104,8 @@ matchBtn.addEventListener("click", async () => {
     formData.append("selected_indices_str", step1Data.faces.join(","));
 
     const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${BACKEND_URL}/match-face-selected/`);
+    xhr.open("POST", "https://facefinder-ai.onrender.com/match-face-selected/");
+    // xhr.open("POST", "http://127.0.0.1:8000/match-face-selected/");
     xhr.responseType = "blob";
 
     xhr.upload.addEventListener("progress", e => {
