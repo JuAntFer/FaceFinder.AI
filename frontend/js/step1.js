@@ -15,6 +15,8 @@ export const step1 = (() => {
   let referenceFiles = [];
   let displayFiles = [];
 
+  const BACKEND_URL =  "https://facefinder-ai.onrender.com";
+
   // -------------------------
   // UI Helpers
   // -------------------------
@@ -139,7 +141,7 @@ export const step1 = (() => {
       const formData = new FormData();
       referenceFiles.forEach(f => formData.append("references", f));
 
-      const response = await fetch("http://127.0.0.1:8000/reference-faces/", { method: "POST", body: formData });
+      const response = await fetch(`${BACKEND_URL}/reference-faces/`, { method: "POST", body: formData });
       if(!response.ok){
         const err = await response.json();
         throw new Error(err.detail || "Upload failed");
