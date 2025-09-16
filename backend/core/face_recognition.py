@@ -18,7 +18,7 @@ logger.info(f"[FaceRecognition] Using device: {DEVICE}")
 # -------------------------
 # Model paths
 # -------------------------
-DEFAULT_YOLO_PATH = os.environ.get("YOLO_WEIGHTS", "backend/models/yolov8n-face-lindevs.pt")
+DEFAULT_YOLO_PATH = os.environ.get("YOLO_WEIGHTS", "models/yolov8n-face-lindevs.pt")
 
 # -------------------------
 # Load models once at startup

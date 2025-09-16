@@ -14,9 +14,9 @@ from fastapi import FastAPI, UploadFile, File, Form, BackgroundTasks, HTTPExcept
 from fastapi.responses import StreamingResponse, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.core.face_recognition import get_face_embeddings, compare_faces, SIMILARITY_THRESHOLD
-from backend.core.processor import process_images_in_dir
-from backend.core.utils import read_upload_file_to_bgr, extract_zip_to_temp, generate_job_id, JOB_STORE
+from core.face_recognition import get_face_embeddings, compare_faces, SIMILARITY_THRESHOLD
+from core.processor import process_images_in_dir
+from core.utils import read_upload_file_to_bgr, extract_zip_to_temp, generate_job_id, JOB_STORE
 
 app = FastAPI(
     title="FaceFinder.AI Backend",
