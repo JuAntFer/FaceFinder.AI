@@ -4,16 +4,24 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>FaceFinder.AI</title>
+
+  <!-- Favicon -->
+  <link rel="icon" href="favicon.ico" type="image/x-icon">
+
+  <!-- CSS -->
   <link rel="stylesheet" href="css/style.css">
+
+  <!-- JSZip for ZIP extraction -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 </head>
 <body>
   <header>
     <h1>FaceFinder.AI</h1>
-    <p>Detect and match faces from reference images</p>
+    <p>Detect and match faces in images</p>
   </header>
 
   <main>
-    <!-- Step 1: Upload Reference -->
+    <!-- Step 1 -->
     <section id="step1">
       <h2>Step 1: Upload Reference Image(s)</h2>
       <div id="referenceDrop" class="drop-zone">
@@ -21,56 +29,71 @@
         <span class="file-info"></span>
         <input type="file" id="referenceFile" accept="image/*,.zip" multiple hidden>
       </div>
-      <button id="uploadReferenceBtn">Upload Reference</button>
-      <div id="facesContainer" class="faces-container"></div>
-    </section>
 
-    <!-- Mode selection -->
-    <section id="modeSection" class="hidden">
-      <div class="options">
-        <p class="options-desc"><strong>Mode:</strong> Choose how faces are compared</p>
-        <label>
-          <input type="radio" name="mode" value="individually" checked>
-          Individually – each selected face is matched one by one
-        </label>
-        <label>
-          <input type="radio" name="mode" value="together">
-          Together – all selected faces are treated as a group
-        </label>
+      <div class="buttons-row">
+        <button id="resetStepBtn" class="reset-btn">Reset</button>
+        <button id="uploadReferenceBtn" class="btn-primary">Upload Reference</button>
       </div>
+
+      <div id="facesContainer" class="faces-container"></div>
+      
+      <div id="message" class="message"></div>
+      
+      <section id="modeSection" class="hidden">
+        <div class="options">
+          <p class="options-desc"><strong>Mode:</strong> Choose how faces are compared</p>
+          <label>
+            <input type="radio" name="mode" value="individually" checked> Individually
+          </label>
+          <label>
+            <input type="radio" name="mode" value="together"> Together
+          </label>
+        </div>
+        <button id="nextStepBtn" class="btn-primary">Go to Step 2</button>
+      </section>
+
+      <div id="loader" class="loader hidden"></div>
     </section>
 
-    <!-- Step 2: Upload Target -->
+    <!-- Step 2 -->
     <section id="step2" class="hidden">
       <h2>Step 2: Upload Target Image(s)</h2>
+
+      <div class="buttons-row">
+        <button id="prevStepBtn" class="btn-secondary">← Go to Step 1</button>
+      </div>
+
       <div id="targetDrop" class="drop-zone">
         <p>Drag & Drop target image(s) or ZIP<br>or click to select</p>
         <span class="file-info"></span>
         <input type="file" id="targetFile" accept="image/*,.zip" multiple hidden>
       </div>
-      <button id="matchBtn">Match Faces</button>
-      <button id="newTargetBtn" class="hidden">Upload New Target</button>
 
-      <!-- Progress bar for ZIP jobs -->
+      <div class="buttons-row">
+        <button id="resetTargetBtn" class="reset-target-btn">Reset</button>
+        <button id="matchBtn" class="btn-primary">Match Faces</button>
+      </div>
+
       <div id="progressContainer">
         <div id="progressBar"></div>
       </div>
 
-      <div id="resultContainer" class="result-container"></div>
+      <div id="loaderStep2" class="loader hidden"></div>
     </section>
 
-    <!-- Step 3: Job Status -->
+    <!-- Step 3 -->
     <section id="step3" class="hidden">
-      <h2>Job Status</h2>
-      <div id="jobStatus"></div>
+      <h2>Step 3: Result</h2>
+
+      <div id="messageStep2" class="message"></div>
+
+      <!-- NEW: Thumbnails go here -->
+      <div id="resultContainer" class="result-thumbnails"></div>
+
       <a id="downloadLink" href="#" class="hidden">Download ZIP</a>
     </section>
-
-    <!-- Messages + Loader -->
-    <div id="message" class="message"></div>
-    <div id="loader" class="loader hidden"></div>
   </main>
 
-  <script type="module" src="js/app.js"></script>
+  <script type="module" src="js/main.js"></script>
 </body>
 </html>

@@ -9,25 +9,40 @@ from facenet_pytorch import InceptionResnetV1
 
 logger = logging.getLogger(__name__)
 
-# Select device string for ultralytics and torch
+# -------------------------
+# Device setup
+# -------------------------
 DEVICE = "cuda:0" if torch.cuda.is_available() else "cpu"
-logger.info(f"Using device: {DEVICE}")
+logger.info(f"[FaceRecognition] Using device: {DEVICE}")
 
-# Paths
+# -------------------------
+# Model paths
+# -------------------------
 DEFAULT_YOLO_PATH = os.environ.get("YOLO_WEIGHTS", "backend/models/yolov8n-face-lindevs.pt")
 
-# Load models once
+# -------------------------
+# Load models once at startup
+# -------------------------
 try:
     face_model = YOLO(DEFAULT_YOLO_PATH)
+    logger.info("[FaceRecognition] YOLO model loaded successfully")
 except Exception as e:
-    logger.exception("Failed to load YOLO model. Make sure weights are in models/ and path is correct.")
+    logger.exception("[FaceRecognition] Failed to load YOLO model. Check weights path.")
     face_model = None
 
-rec_model = InceptionResnetV1(pretrained="vggface2").eval().to(DEVICE)
+try:
+    rec_model = InceptionResnetV1(pretrained="vggface2").eval().to(DEVICE)
+    logger.info("[FaceRecognition] Face embedding model loaded successfully")
+except Exception as e:
+    logger.exception("[FaceRecognition] Failed to load InceptionResnetV1 model")
+    rec_model = None
 
 SIMILARITY_THRESHOLD = float(os.environ.get("SIM_THRESHOLD", 0.7))
 
 
+# -------------------------
+# Utilities
+# -------------------------
 def l2_normalize(a: np.ndarray, eps: float = 1e-10) -> np.ndarray:
     a = np.asarray(a, dtype=np.float32)
     norm = np.linalg.norm(a)
@@ -36,38 +51,25 @@ def l2_normalize(a: np.ndarray, eps: float = 1e-10) -> np.ndarray:
     return a / norm
 
 
-def _xyxy_to_int(xyxy):
-    arr = np.array(xyxy).flatten()[:4]
-    return [int(max(0, v)) for v in arr]
-
-
 def get_face_embeddings(img_bgr: np.ndarray, resize_to=(160, 160)):
     """
-    Detect faces in the BGR image and return list of tuples:
+    Detect faces in BGR image and return:
         [(embedding (1D numpy), (x1,y1,x2,y2)), ...]
-    Embeddings are L2-normalized 1D numpy arrays.
     """
-    if img_bgr is None:
+    if img_bgr is None or face_model is None or rec_model is None:
         return []
 
-    # Run YOLO detection (ultralytics). Pass device string; model returns Results
     results = face_model(img_bgr, device=DEVICE, verbose=False)[0]
 
     embeddings = []
-    # results.boxes is a list-like of Box objects
     for box in results.boxes:
         try:
-            # robust extraction of coords
-            xyxy = box.xyxy[0]  # might be tensor or numpy
-            try:
-                arr = xyxy.cpu().numpy()
-            except Exception:
-                arr = np.array(xyxy)
-            x1, y1, x2, y2 = [int(max(0, int(v))) for v in arr[:4]]
+            xyxy = box.xyxy[0]
+            arr = xyxy.cpu().numpy() if hasattr(xyxy, "cpu") else np.array(xyxy)
+            x1, y1, x2, y2 = [int(max(0, v)) for v in arr[:4]]
         except Exception:
             continue
 
-        # guard against invalid crop
         h, w = img_bgr.shape[:2]
         x1c, y1c, x2c, y2c = max(0, x1), max(0, y1), min(w, x2), min(h, y2)
         if x2c <= x1c or y2c <= y1c:
@@ -77,10 +79,8 @@ def get_face_embeddings(img_bgr: np.ndarray, resize_to=(160, 160)):
         if face.size == 0:
             continue
 
-        # preprocess for facenet-pytorch
         face_resized = cv2.resize(face, resize_to)
         face_rgb = cv2.cvtColor(face_resized, cv2.COLOR_BGR2RGB)
-        # convert to tensor and normalize to [-1,1]
         face_tensor = torch.from_numpy(face_rgb).permute(2, 0, 1).unsqueeze(0).float().to(DEVICE) / 255.0
         face_tensor = (face_tensor - 0.5) / 0.5
 
@@ -93,14 +93,11 @@ def get_face_embeddings(img_bgr: np.ndarray, resize_to=(160, 160)):
 
 def compare_faces(emb1: np.ndarray, emb2: np.ndarray) -> float:
     """
-    Compute cosine similarity between two 1-D embeddings (already l2-normalized).
-    Returns float in [-1,1] (1==same)
+    Cosine similarity between two normalized embeddings.
+    Returns [-1,1] where 1 = same person.
     """
-    a = np.asarray(emb1, dtype=np.float32).ravel()
-    b = np.asarray(emb2, dtype=np.float32).ravel()
-    if a.size == 0 or b.size == 0:
+    if emb1 is None or emb2 is None or len(emb1) == 0 or len(emb2) == 0:
         return -1.0
-    # embeddings should be normalized; but normalize to be safe
-    a = l2_normalize(a)
-    b = l2_normalize(b)
+    a = l2_normalize(np.asarray(emb1, dtype=np.float32))
+    b = l2_normalize(np.asarray(emb2, dtype=np.float32))
     return float(np.dot(a, b))
