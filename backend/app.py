@@ -18,6 +18,11 @@ from core.face_recognition import get_face_embeddings, compare_faces, SIMILARITY
 from core.processor import process_images_in_dir
 from core.utils import read_upload_file_to_bgr, extract_zip_to_temp, generate_job_id, JOB_STORE
 
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger("facefinder")
+
 app = FastAPI(
     title="FaceFinder.AI Backend",
     description="Detect selected faces from reference image(s) in target image(s)",
@@ -138,6 +143,71 @@ async def reference_faces(references: List[UploadFile] = File(...)):
 # -------------------------
 # Step 2: Match selected face(s) with target images / zip
 # -------------------------
+# @app.post("/match-face-selected/")
+# async def match_face_selected(
+#     references: List[UploadFile] = File([]),
+#     target: UploadFile = File(...),
+#     selected_indices_str: str = Form(...),
+#     mode: str = Form("individually"),
+#     max_seconds: int = Form(300),
+#     background_tasks: BackgroundTasks = None
+# ):
+#     try:
+#         # Determine target dataset
+#         tmp_data_dir = tempfile.mkdtemp(prefix="target_")
+#         is_zip_target = target.filename.lower().endswith(".zip")
+        
+#         if is_zip_target:
+#             tmp_data_dir = extract_zip_to_temp(target)
+#             subdirs = [os.path.join(tmp_data_dir, d) for d in os.listdir(tmp_data_dir)]
+#             if len(subdirs) == 1 and os.path.isdir(subdirs[0]):
+#                 tmp_data_dir = subdirs[0]
+#         else:
+#             # Single target image → save to tmp_data_dir
+#             path = os.path.join(tmp_data_dir, target.filename)
+#             with open(path, "wb") as f:
+#                 f.write(await target.read())
+
+#         # Determine reference embeddings to use
+#         ref_vectors = []
+#         if REF_STORE:
+#             all_embeddings = [np.array(entry["embedding"]) for entry in REF_STORE]
+#             selected_indices = [int(x.strip()) for x in selected_indices_str.split(",") if x.strip()]
+#             for idx in selected_indices:
+#                 if idx < 0 or idx >= len(all_embeddings):
+#                     raise HTTPException(status_code=400, detail=f"Invalid face index: {idx}")
+#                 ref_vectors.append(all_embeddings[idx])
+#         else:
+#             raise HTTPException(status_code=400, detail="No reference faces available")
+
+#         # Process all images in tmp_data_dir
+#         output_dir = tempfile.mkdtemp(prefix="ffai_out_")
+#         summary = process_images_in_dir(
+#             data_dir=tmp_data_dir,
+#             ref_embeddings=ref_vectors,
+#             output_dir=output_dir,
+#             mode=mode,
+#             max_seconds=max_seconds,
+#             threshold=SIMILARITY_THRESHOLD
+#         )
+
+    #     # Zip all results
+    #     zip_path = os.path.join(tempfile.gettempdir(), "matched_results.zip")
+    #     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+    #         for root, _, files in os.walk(output_dir):
+    #             for file in files:
+    #                 file_path = os.path.join(root, file)
+    #                 arcname = os.path.relpath(file_path, start=output_dir)
+    #                 zipf.write(file_path, arcname=arcname)
+
+    #     # Clean up
+    #     shutil.rmtree(tmp_data_dir, ignore_errors=True)
+    #     shutil.rmtree(output_dir, ignore_errors=True)
+
+    #     return FileResponse(zip_path, media_type="application/zip", filename="matched_results.zip")
+
+    # except Exception as e:
+    #     raise HTTPException(status_code=400, detail=str(e))
 @app.post("/match-face-selected/")
 async def match_face_selected(
     references: List[UploadFile] = File([]),
@@ -148,35 +218,53 @@ async def match_face_selected(
     background_tasks: BackgroundTasks = None
 ):
     try:
+        logger.info("---- /match-face-selected/ called ----")
+        logger.info(f"Target filename: {getattr(target, 'filename', None)}")
+        logger.info(f"Selected indices str: '{selected_indices_str}' (len={len(selected_indices_str)})")
+        logger.info(f"Mode: {mode}")
+        logger.info(f"Max seconds: {max_seconds}")
+        logger.info(f"References count: {len(references) if references else 0}")
+
         # Determine target dataset
         tmp_data_dir = tempfile.mkdtemp(prefix="target_")
         is_zip_target = target.filename.lower().endswith(".zip")
-        
+        logger.info(f"Is target a zip? {is_zip_target}")
+
         if is_zip_target:
             tmp_data_dir = extract_zip_to_temp(target)
+            logger.info(f"Extracted target zip to: {tmp_data_dir}")
             subdirs = [os.path.join(tmp_data_dir, d) for d in os.listdir(tmp_data_dir)]
             if len(subdirs) == 1 and os.path.isdir(subdirs[0]):
                 tmp_data_dir = subdirs[0]
+                logger.info(f"Using nested dir: {tmp_data_dir}")
         else:
-            # Single target image → save to tmp_data_dir
             path = os.path.join(tmp_data_dir, target.filename)
             with open(path, "wb") as f:
                 f.write(await target.read())
+            logger.info(f"Saved single target image to {path}")
 
         # Determine reference embeddings to use
         ref_vectors = []
         if REF_STORE:
             all_embeddings = [np.array(entry["embedding"]) for entry in REF_STORE]
+            logger.info(f"Total REF_STORE embeddings: {len(all_embeddings)}")
             selected_indices = [int(x.strip()) for x in selected_indices_str.split(",") if x.strip()]
+            logger.info(f"Parsed selected indices: {selected_indices}")
             for idx in selected_indices:
                 if idx < 0 or idx >= len(all_embeddings):
+                    logger.error(f"Invalid face index: {idx}")
                     raise HTTPException(status_code=400, detail=f"Invalid face index: {idx}")
                 ref_vectors.append(all_embeddings[idx])
         else:
+            logger.error("No reference faces available")
             raise HTTPException(status_code=400, detail="No reference faces available")
+
+        logger.info(f"Number of ref vectors used: {len(ref_vectors)}")
 
         # Process all images in tmp_data_dir
         output_dir = tempfile.mkdtemp(prefix="ffai_out_")
+        logger.info(f"Processing images from {tmp_data_dir} -> {output_dir}")
+
         summary = process_images_in_dir(
             data_dir=tmp_data_dir,
             ref_embeddings=ref_vectors,
@@ -185,6 +273,7 @@ async def match_face_selected(
             max_seconds=max_seconds,
             threshold=SIMILARITY_THRESHOLD
         )
+        logger.info(f"Processing summary: {summary}")
 
         # Zip all results
         zip_path = os.path.join(tempfile.gettempdir(), "matched_results.zip")
@@ -194,14 +283,16 @@ async def match_face_selected(
                     file_path = os.path.join(root, file)
                     arcname = os.path.relpath(file_path, start=output_dir)
                     zipf.write(file_path, arcname=arcname)
+        logger.info(f"Zipped results to {zip_path}")
 
-        # Clean up
         shutil.rmtree(tmp_data_dir, ignore_errors=True)
         shutil.rmtree(output_dir, ignore_errors=True)
 
+        logger.info("Returning matched_results.zip")
         return FileResponse(zip_path, media_type="application/zip", filename="matched_results.zip")
 
     except Exception as e:
+        logger.exception("Error in /match-face-selected/")
         raise HTTPException(status_code=400, detail=str(e))
 
 # -------------------------
