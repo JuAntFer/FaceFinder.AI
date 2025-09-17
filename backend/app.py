@@ -35,14 +35,20 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# -------------------------
 # Persistent Reference Storage
 # -------------------------
 REFS_DIR = os.path.join(tempfile.gettempdir(), "ffai_refs")
 os.makedirs(REFS_DIR, exist_ok=True)
+
+# Clear old reference files and memory on startup
+for f in os.listdir(REFS_DIR):
+    try:
+        os.remove(os.path.join(REFS_DIR, f))
+    except Exception:
+        pass
+
 # REF_STORE: list of dicts { index, ref_source, path, embedding, bbox }
 REF_STORE = []
-
 # -------------------------
 # File validation
 # -------------------------
